@@ -1,0 +1,40 @@
+# Build products and downloaded SDKs
+/build/
+/dist/
+/work/
+/toolchain/
+.gradle/
+local.properties
+*.class
+*.dex
+*.apk
+*.aab
+*.idsig
+*.zip
+.DS_Store
+.idea/
+.vscode/
+
+# Signing material and credentials (never commit release keys)
+/signing/
+**/debug-signing/
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+password.txt
+*.password
+.env
+.env.*
+
+# Personal ledger exports, databases and runtime state
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sfbook
+*.csv
+adbkey
+adbkey.pub
+/tests/runtime-build/
