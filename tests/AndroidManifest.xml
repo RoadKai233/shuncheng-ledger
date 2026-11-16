@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="cn.personal.shunfeng.tests" android:versionCode="1" android:versionName="1">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+    <application android:label="顺路账本运行验证" android:allowBackup="false" />
+    <instrumentation android:name="cn.personal.shunfeng.tests.RuntimeChecks" android:targetPackage="cn.personal.shunfeng" android:functionalTest="true" android:label="Offline runtime checks" />
+</manifest>
