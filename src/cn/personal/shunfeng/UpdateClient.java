@@ -41,6 +41,7 @@ public final class UpdateClient {
     public static final String LATEST_API = "https://api.github.com/repos/" + OWNER + "/" + REPOSITORY + "/releases/latest";
     public static final String APP_PACKAGE = "cn.personal.shunfeng";
     public static final String APK_FILENAME = "verified-update.apk";
+    private static final String METADATA_FILENAME = "verified-update.json";
     public static final String APK_MIME = "application/vnd.android.package-archive";
     public static final int MAX_MANIFEST_BYTES = 64 * 1024;
     public static final long MAX_APK_BYTES = 100L * 1024 * 1024;
@@ -164,10 +165,13 @@ public final class UpdateClient {
         if (release == null) throw new IOException("缺少更新信息");
         if (release.versionCode <= installedVersion(context)) throw new IOException("该版本无需重复安装");
         File directory = updateDirectory(context);
-        File finished = new File(directory, APK_FILENAME);
+        File finished = verifiedFile(context);
         if (finished.isFile()) {
-            try { verifyDownloadedApk(context, release, finished); return finished; }
+            boolean valid = false;
+            try { verifyDownloadedApk(context, release, finished); valid = true; }
+            catch (InterruptedIOException cancelled) { throw cancelled; }
             catch (IOException invalidCachedFile) { if (!finished.delete()) throw new IOException("无法清理旧安装包"); }
+            if (valid) { saveDownloadedRelease(context, release); return finished; }
         }
         File partial = File.createTempFile("download-", ".part", directory);
         boolean published = false;
@@ -190,11 +194,63 @@ public final class UpdateClient {
             }
             verifyDownloadedApk(context, release, partial);
             if (!partial.renameTo(finished)) throw new IOException("无法保存已验证的安装包");
-            published = true; return finished;
+            published = true;
+            saveDownloadedRelease(context, release);
+            return finished;
         } finally {
             if (connection != null) connection.disconnect();
             if (!published) partial.delete();
         }
+    }
+
+    /** Worker-thread recovery after Android terminates this process while changing installation permission.
+     * Metadata is only a hint: every recovery verifies the APK again and never restores an authorization grant. */
+    public static synchronized Release loadDownloadedRelease(Context context) throws IOException {
+        File metadata = metadataFile(context);
+        if (!metadata.isFile()) return null;
+        try {
+            if (metadata.length() < 1 || metadata.length() > MAX_MANIFEST_BYTES) throw new IOException("更新缓存信息大小无效");
+            String json;
+            try (InputStream input = new FileInputStream(metadata); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192]; int read;
+                while ((read = input.read(buffer)) != -1) {
+                    if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("更新已取消");
+                    if (output.size() + read > MAX_MANIFEST_BYTES) throw new IOException("更新缓存信息过大");
+                    output.write(buffer, 0, read);
+                }
+                json = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(output.toByteArray())).toString();
+            }
+            Release release = parseManifest(json);
+            verifyDownloadedApk(context, release, verifiedFile(context));
+            return release;
+        } catch (InterruptedIOException cancelled) { throw cancelled; }
+        catch (IOException | RuntimeException invalidCache) {
+            // Delete only this fixed hint. A valid APK can still be reused by a later explicit download.
+            metadata.delete();
+            return null;
+        }
+    }
+
+    private static void saveDownloadedRelease(Context context, Release release) throws IOException {
+        byte[] bytes;
+        try {
+            JSONObject json = new JSONObject();
+            json.put("versionCode", release.versionCode); json.put("versionName", release.versionName);
+            json.put("apkUrl", release.apkUrl); json.put("sha256", release.sha256);
+            json.put("size", release.size); json.put("notes", release.notes);
+            bytes = json.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (JSONException e) { throw new IOException("无法保存更新信息", e); }
+        if (bytes.length > MAX_MANIFEST_BYTES) throw new IOException("更新缓存信息过大");
+        File target = metadataFile(context);
+        File partial = File.createTempFile("metadata-", ".part", target.getParentFile());
+        try {
+            try (FileOutputStream output = new FileOutputStream(partial)) {
+                output.write(bytes); output.flush(); output.getFD().sync();
+            }
+            // Same-directory rename publishes the whole UTF-8 document or keeps the previous complete file.
+            if (!partial.renameTo(target)) throw new IOException("无法保存更新缓存信息");
+        } finally { partial.delete(); }
     }
 
     /** Re-run immediately before handing the APK to Android's confirmation screen. */
@@ -274,6 +330,13 @@ public final class UpdateClient {
     static File verifiedFile(Context context) throws IOException {
         File file = new File(updateDirectory(context), APK_FILENAME);
         if (!file.getCanonicalFile().equals(file)) throw new IOException("安装包缓存路径不正确");
+        return file;
+    }
+    /** Fixed private APK path; callers must verify it before offering installation. */
+    public static File getVerifiedFile(Context context) throws IOException { return verifiedFile(context); }
+    private static File metadataFile(Context context) throws IOException {
+        File file = new File(updateDirectory(context), METADATA_FILENAME);
+        if (!file.getCanonicalFile().equals(file)) throw new IOException("更新信息缓存路径不正确");
         return file;
     }
     public static Intent createInstallIntent(Context context, File apk) throws IOException {

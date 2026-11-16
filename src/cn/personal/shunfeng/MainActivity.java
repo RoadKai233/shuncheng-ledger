@@ -56,7 +56,7 @@ public class MainActivity extends Activity {
     private Runnable afterUnlock;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final ExecutorService updateWorker=Executors.newSingleThreadExecutor();
-    private boolean foreground, updateWorking;
+    private boolean foreground, updateWorking, updateCacheLoaded;
     private Runnable pendingUpdateUi;
     private UpdateClient.Release downloadedRelease;
     private File downloadedUpdate;
@@ -449,10 +449,25 @@ public class MainActivity extends Activity {
         catch(Exception ignored){error("没有可用的浏览器");}
     }
     private void maybeCheckUpdates(){
-        if(!unlocked||!foreground||!automaticUpdates()||updateWorking||pendingUpdateUi!=null)return;
+        if(!unlocked||!foreground||updateWorking)return;
+        if(!updateCacheLoaded){restoreDownloadedUpdate();return;}
+        if(!automaticUpdates()||pendingUpdateUi!=null)return;
         long age=System.currentTimeMillis()-getPreferences(MODE_PRIVATE).getLong("update_checked_at",0);
         if(age>=0&&age<12*60*60*1000L)return;
         checkUpdates(false);
+    }
+    private void restoreDownloadedUpdate(){
+        updateCacheLoaded=true;updateWorking=true;
+        updateWorker.execute(()->{
+            UpdateClient.Release release=null;File file=null;
+            try{release=UpdateClient.loadDownloadedRelease(getApplicationContext());if(release!=null)file=UpdateClient.getVerifiedFile(getApplicationContext());}catch(Exception ignored){}
+            final UpdateClient.Release cachedRelease=release;final File cachedFile=file;
+            runOnUiThread(()->{
+                updateWorking=false;if(isFinishing()||isDestroyed())return;
+                if(cachedRelease!=null&&cachedFile!=null){downloadedRelease=cachedRelease;downloadedUpdate=cachedFile;queueUpdateUi(()->showInstallReady());}
+                else maybeCheckUpdates();
+            });
+        });
     }
     private void checkUpdates(boolean manual){
         if(!unlocked||!foreground)return;
