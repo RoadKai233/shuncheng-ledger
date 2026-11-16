@@ -1,0 +1,51 @@
+name: Android debug build and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          test -n "$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+      - name: Test core logic
+        run: bash tests/run-core-tests.sh
+      - name: Compile debug application and instrumentation APK
+        env:
+          BUILD_TYPE: debug
+        run: |
+          bash build.sh
+          bash tests/build-runtime-tests.sh
+          bash tests/build-update-tests.sh
+      - name: Upload debug-only artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shuncheng-ledger-debug-${{ github.sha }}
+          path: |
+            build/shuncheng-ledger-debug.apk
+            build/runtime-tests.apk
+            build/update-tests.apk
+          if-no-files-found: error
+          retention-days: 7
